@@ -17,24 +17,41 @@ export const TaxZodSchema = z.object({
 export const SourceMetaZodSchema = z.object({
   provider: z.enum(['gemini', 'vercel-ai']),
   modality: z.enum(['text', 'image', 'ocr_text']),
-  extractedAt: z.date(),
+  extractedAt: z
+    .string()
+    .pipe(z.iso.datetime())
+    .default(() => new Date().toISOString()),
 });
 
 export const InvoiceZodSchema = z.object({
   _id: z.string().optional(),
 
-  vendorId: z.string(),
-  invoiceNumber: z.string().min(1).trim(),
-  issueDate: z.date(),
-  dueDate: z.date().optional(),
+  vendorId: z.string().default('UNKNOWN').optional(),
+  invoiceNumber: z.string().default('UNKNOWN').optional(),
+  issueDate: z
+    .string()
+    .pipe(z.iso.datetime())
+    .default(() => new Date().toISOString())
+    .optional(),
+  dueDate: z.string().pipe(z.iso.datetime()).optional(),
 
-  lineItems: z.array(LineItemZodSchema).min(1),
+  lineItems: z
+    .array(LineItemZodSchema)
+    .default([
+      {
+        description: 'unknown',
+        quantity: 1,
+        unitPrice: 0,
+        total: 0,
+      },
+    ])
+    .optional(),
 
-  subtotal: z.number().nonnegative(),
-  tax: TaxZodSchema,
-  total: z.number().nonnegative(),
+  subtotal: z.number().default(0).optional(),
+  tax: TaxZodSchema.default({ rate: 0, amount: 0 }).optional(),
+  total: z.number().default(0).optional(),
 
-  currency: z.enum(['USD', 'EUR', 'ARS', 'BRL']).default('USD'),
+  currency: z.enum(['USD', 'EUR', 'ARS', 'BRL']).default('USD').optional(),
 
   source: SourceMetaZodSchema,
 });
