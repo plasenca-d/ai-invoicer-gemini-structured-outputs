@@ -3,7 +3,7 @@ import { z } from 'zod';
 // Sub-schemas
 export const LineItemZodSchema = z.object({
   description: z.string().min(1).trim(),
-  quantity: z.number().int().positive(),
+  quantity: z.number().int().min(1),
   unitPrice: z.number().nonnegative(),
   total: z.number().nonnegative(),
   sku: z.string().trim().optional(),

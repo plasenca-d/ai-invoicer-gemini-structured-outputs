@@ -1,0 +1,12 @@
+@host = http://localhost:3000
+
+GET {{host}}/extracts
+###
+
+POST {{host}}/extracts/gemini
+Content-Type: application/json
+
+{
+  "modality": "text",
+  "payload": "asdasdasd"
+}
