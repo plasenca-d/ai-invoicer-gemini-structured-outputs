@@ -1,98 +1,304 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Structured Outputs Mastery
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A practical guide to AI structured outputs using **Zod as a single schema source of truth** across two SDKs: Google Gemini and Vercel AI.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+> This project is a learning sandbox. The goal: understand structured outputs deeply enough to apply them anywhere.
 
-## Description
+## What are Structured Outputs?
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+LLMs are probabilistic — they can return **any** shape. Structured outputs constrain them to return a **specific schema**, every time. Instead of parsing JSON from free-text responses, you get typed, validated data directly.
 
-## Project setup
-
-```bash
-$ pnpm install
+**Without structured outputs:**
+```
+Prompt: "Extract invoice data from this text"
+Response: "{ "vendor": "Acme Corp", "total": 1500, ... }"  ← need to parse, validate, handle errors
 ```
 
-## Compile and run the project
-
-```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+**With structured outputs:**
+```
+Prompt + JSON Schema → Model → Validated JSON matching your schema
 ```
 
-## Run tests
+The model **must** conform to the schema. If it can't, it returns a refusal instead of garbage.
 
-```bash
-# unit tests
-$ pnpm run test
+---
 
-# e2e tests
-$ pnpm run test:e2e
+## Core Pattern: Zod as Single Source of Truth
 
-# test coverage
-$ pnpm run test:cov
+One Zod schema, two consumption paths:
+
+```
+Zod Schema (source of truth)
+    │
+    ├───► z.toJSONSchema() (Zod v4 built-in) ──► Gemini SDK responseJsonSchema
+    │
+    └───► Native Zod ──► Vercel AI generateText + Output.object
 ```
 
-## Deployment
+> **Note**: This project uses **Zod v4** (`"zod": "^4.4.3"`). The `toJSONSchema()` method is built into Zod v4 — no `zod-to-json-schema` package needed. Older versions of Zod require the separate `zod-to-json-schema` library.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+This prevents schema drift between providers — **one change updates both**.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Example: Invoice Schema
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+```typescript
+// src/invoices/schemas/invoice.zod.ts
+
+const LineItemZodSchema = z.object({
+  description: z.string().min(1).trim(),
+  quantity: z.number().int().positive(),
+  unitPrice: z.number().nonnegative(),
+  total: z.number().nonnegative(),
+  sku: z.string().trim().optional(),
+});
+
+const TaxZodSchema = z.object({
+  rate: z.number().min(0).max(1),
+  amount: z.number().nonnegative(),
+});
+
+const SourceMetaZodSchema = z.object({
+  provider: z.enum(['gemini', 'vercel-ai']),
+  modality: z.enum(['text', 'image', 'ocr_text']),
+  extractedAt: z.date(),
+});
+
+export const InvoiceZodSchema = z.object({
+  _id: z.string().optional(),
+  vendorId: z.string(),
+  invoiceNumber: z.string().min(1).trim(),
+  issueDate: z.date(),
+  dueDate: z.date().optional(),
+  lineItems: z.array(LineItemZodSchema).min(1),
+  subtotal: z.number().nonnegative(),
+  tax: TaxZodSchema,
+  total: z.number().nonnegative(),
+  currency: z.enum(['USD', 'EUR', 'ARS', 'BRL']).default('USD'),
+  source: SourceMetaZodSchema,
+});
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## Path 1: Gemini SDK (`@google/genai`)
 
-Check out a few resources that may come in handy when working with NestJS:
+**Requires**: JSON Schema → `responseJsonSchema`
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### Step 1: Convert Zod → JSON Schema
 
-## Support
+Zod v4 has `toJSONSchema()` built-in — no external library needed.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```typescript
+// src/schemas/to-json-schema.ts
+import * as z from 'zod';
 
-## Stay in touch
+export function toJsonSchema<T>(zodSchema: z.ZodType<T>): object {
+  return z.toJSONSchema(zodSchema, {
+    target: 'openapi-3.0',
+    unrepresentable: 'any',  // dates become strings
+    override: (ctx) => {
+      const def = ctx.zodSchema._def;
+      if (def?.type === 'date') {
+        ctx.jsonSchema.type = 'string';
+        ctx.jsonSchema.format = 'date-time';
+      }
+    },
+  });
+}
+```
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+This lives in `src/schemas/to-json-schema.ts` — wraps Zod v4's native method with date-handling override for OpenAPI compatibility.
 
-## License
+### Step 2: Use with Gemini
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```typescript
+import { GoogleGenAI } from '@google/genai';
+import { InvoiceZodSchema } from './invoices/schemas/invoice.zod';
+import { toJsonSchema } from './schemas/to-json-schema';
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+async function extractWithGemini(text: string) {
+  const jsonSchema = toJsonSchema(InvoiceZodSchema);
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: `Extract invoice data from: ${text}`,
+    config: {
+      responseJsonSchema: jsonSchema,
+    },
+  });
+
+  // Response is guaranteed to match InvoiceZodSchema
+  return JSON.parse(response.text);
+}
+```
+
+### Key Constraint: No `$ref`
+
+Zod v4's `toJSONSchema()` uses `$ref` by default for nested schemas. Gemini's OpenAPI subset **doesn't resolve `$ref`** — you must inline everything.
+
+```typescript
+// WRONG — $ref pointers Gemini can't resolve
+z.toJSONSchema(schema)
+
+// CORRECT — inline all definitions (Zod v4 built-in option)
+z.toJSONSchema(schema, {
+  $refStrategy: 'none',  // Gemini requirement
+})
+```
+
+---
+
+## Path 2: Vercel AI SDK (`ai` + `@ai-sdk/google`)
+
+**Requires**: Native Zod (no conversion needed)
+
+```typescript
+import { generateText } from 'ai';
+import { google } from '@ai-sdk/google';
+import { InvoiceZodSchema } from './invoices/schemas/invoice.zod';
+
+async function extractWithVercelAI(text: string) {
+  const { object } = await generateText({
+    model: google('gemini-2.5-flash'),
+    prompt: `Extract invoice data from: ${text}`,
+    output: Output.object({ schema: InvoiceZodSchema }),
+  });
+
+  return object; // Already typed as InvoiceZod
+}
+```
+
+Vercel AI accepts Zod directly — no JSON Schema conversion needed. The SDK handles the conversion internally.
+
+---
+
+## Key Gotchas
+
+### 1. Dates — JSON Schema can't represent them
+
+```typescript
+// Zod: date type
+issueDate: z.date()
+
+// JSON Schema output: string with date-time format
+// { "issueDate": { "type": "string", "format": "date-time" } }
+```
+
+Your conversion layer must handle this. See `override` in `toJsonSchema()` above.
+
+### 2. Optional vs required
+
+```typescript
+// Zod: dueDate is optional
+dueDate: z.date().optional()
+
+// JSON Schema: dueDate NOT in required array
+// Required array only contains mandatory fields
+```
+
+### 3. Enums become string arrays
+
+```typescript
+// Zod
+currency: z.enum(['USD', 'EUR', 'ARS', 'BRL'])
+
+// JSON Schema
+currency: { type: 'string', enum: ['USD', 'EUR', 'ARS', 'BRL'] }
+```
+
+### 4. `z.union()` → `anyOf` (may fail)
+
+```typescript
+// Zod
+const schema = z.union([z.string(), z.number()])
+
+// JSON Schema — Gemini may reject anyOf
+{ anyOf: [{ type: 'string' }, { type: 'number' }] }
+```
+
+Test unions with your provider. Fallback: flatten the union into a single type.
+
+---
+
+## Project Architecture
+
+```
+src/
+├── schemas/
+│   └── to-json-schema.ts      # Zod → OpenAPI 3.0 converter
+├── invoices/
+│   ├── schemas/
+│   │   └── invoice.zod.ts     # Zod schema (single source)
+│   ├── entities/              # Mongoose documents
+│   │   ├── invoice.entity.ts  # Compound indexes, embedded docs
+│   │   ├── line-item.entity.ts # Embedded (no _id)
+│   │   ├── tax.entity.ts
+│   │   ├── source-meta.entity.ts
+│   │   └── vendor.entity.ts    # Referenced (shared collection)
+│   ├── dto/
+│   ├── invoices.controller.ts
+│   ├── invoices.service.ts
+│   └── invoices.module.ts
+└── app.module.ts
+```
+
+### MongoDB Indexes
+
+```typescript
+// Compound unique: vendor + invoiceNumber
+InvoiceSchema.index({ vendorId: 1, invoiceNumber: 1 }, { unique: true });
+
+// Compound for date queries
+InvoiceSchema.index({ vendorId: 1, issueDate: -1 });
+
+// Multikey index for SKU search inside lineItems
+InvoiceSchema.index({ 'lineItems.sku': 1 });
+```
+
+### Embed vs Reference Pattern
+
+| Embedded | Referenced |
+|----------|------------|
+| LineItems (bounded, co-accessed) | Vendor (shared, independently queried) |
+| Lives inside Invoice document | Own collection, referenced by `_id` |
+| No separate queries | Populated when needed |
+
+---
+
+## Setup
+
+```bash
+pnpm install
+cp .env.example .env  # Add your API keys
+pnpm run start:dev
+```
+
+### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `MONGO_URI` | MongoDB connection |
+| `GEMINI_API_KEY` | Gemini SDK (`@google/genai`) |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Vercel AI SDK (`@ai-sdk/google`) |
+
+---
+
+## Learning Path
+
+| Phase | What's Built | What You Learn |
+|-------|--------------|----------------|
+| 1 | NestJS CRUD + Mongoose schemas | NestJS DI, Mongoose decorators, embed vs reference |
+| 2 | Extraction endpoints (both providers) | Structured outputs pattern, Zod → JSON Schema conversion |
+| 3 | MongoDB aggregations + reporting | Aggregation pipelines, `$lookup`, `$facet`, `$bucket` |
+| 4 | Provider comparison docs | DX, cost, latency, error handling tradeoffs |
+
+---
+
+## Further Reading
+
+- [Gemini — Structured Outputs](https://ai.google.dev/gemini-api/docs structured-outputs)
+- [Vercel AI — Object Generation](https://sdk.vercel.ai/docs/guides/providers/google)
+- [Zod v4 — toJSONSchema](https://zod.dev)
+- [MongoDB — Aggregation Pipeline](https://docs.mongodb.com/manual/aggregation/)
