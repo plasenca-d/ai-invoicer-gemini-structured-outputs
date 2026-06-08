@@ -4,6 +4,8 @@ import { GoogleGenAI } from '@google/genai';
 import { envs } from 'src/config/envs';
 import { InvoiceZodSchema } from 'src/invoices/schemas/invoice.zod';
 import { toJsonSchema } from 'src/schemas/to-json-schema';
+import { generateText, Output } from 'ai';
+import { google } from '@ai-sdk/google';
 
 const ai = new GoogleGenAI({
   apiKey: envs.GEMINI_API_KEY,
@@ -17,6 +19,23 @@ const SYSTEM_INSTRUCTION =
 
 @Injectable()
 export class ExtractsService {
+  async extractVercelGemini(extractRequestDto: ExtractRequestDto) {
+    const { modality, payload } = extractRequestDto;
+
+    const contents = this.normalizePayload(modality, payload);
+
+    const { output } = await generateText({
+      model: google('gemini-2.5-flash'),
+      prompt: contents,
+      output: Output.object({
+        schema: InvoiceZodSchema,
+      }),
+      system: SYSTEM_INSTRUCTION,
+    });
+
+    return output;
+  }
+
   async extractGemini(extractRequestDto: ExtractRequestDto) {
     const { modality, payload } = extractRequestDto;
     const contents = this.normalizePayload(modality, payload);
@@ -62,14 +81,10 @@ export class ExtractsService {
       throw new Error(`Gemini no devolvió JSON válido: ${rawText}`);
     }
 
-    console.log({
-      parsed,
-    });
-
     const result = InvoiceZodSchema.safeParse(parsed);
 
     if (!result.success) {
-      console.error('❌ Zod parse failed. Raw:', parsed);
+      console.error('Zod parse failed. Raw:', parsed);
       throw new Error(
         `Invalid Invoice structure: ${JSON.stringify(result.error.issues)}`,
       );

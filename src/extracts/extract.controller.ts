@@ -10,4 +10,9 @@ export class ExtractsController {
   async extractGemini(@Body() extractRequestDto: ExtractRequestDto) {
     return await this.extractsService.extractGemini(extractRequestDto);
   }
+
+  @Post('vercel-ai')
+  async extractVercelGemini(@Body() extractRequestDto: ExtractRequestDto) {
+    return await this.extractsService.extractVercelGemini(extractRequestDto);
+  }
 }
